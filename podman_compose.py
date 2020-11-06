@@ -661,45 +661,25 @@ def container_to_args(compose, cnt, verbose=False, detached=True, podman_command
             podman_args.extend(command)
     return podman_args
 
-def rec_deps(services, service_name, start_point=None):
-    """
-    return all dependencies of service_name recursively
-    """
-    if not start_point:
-        start_point = service_name
-    deps = services[service_name]["_deps"]
-    for dep_name in deps.copy():
-        # avoid A depens on A
-        if dep_name == service_name:
+def all_deps(compose, containers, with_extends=False, dest=None):
+    if dest is None:
+        dest = []
+    for cnt in containers:
+        if cnt in dest:
             continue
-        dep_srv = services.get(dep_name, None)
-        if not dep_srv:
-            continue
-        # NOTE: avoid creating loops, A->B->A
-        if start_point and start_point in dep_srv["_deps"]:
-            continue
-        new_deps = rec_deps(services, dep_name, start_point)
-        deps.update(new_deps)
-    return deps
-
-def flat_deps(services, with_extends=False):
-    """
-    create dependencies "_deps" or update it recursively for all services
-    """
-    for name, srv in services.items():
-        deps = set()
-        srv["_deps"] = deps
+        dep_service_names = cnt.get('depends_on', [])
         if with_extends:
-            ext = srv.get("extends", {}).get("service", None)
-            if ext:
-                if ext != name: deps.add(ext)
-                continue
-        deps.update(srv.get("depends_on", []))
-        # parse link to get service name and remove alias
-        deps.update([(c.split(":")[0] if ":" in c else c)
-            for c in srv.get("links", [])])
-    for name, srv in services.items():
-        rec_deps(services, name)
+            ext = cnt.get('extends', {}).get('service', None)
+            if ext is not None and ext != cnt['service_name']:
+                dep_service_names.append(ext)
+        dep_containers = [
+            compose.container_by_name[dep_cnt_name]
+            for dep_service_name in dep_service_names
+            for dep_cnt_name in compose.container_names_by_service[dep_service_name]
+        ]
+        all_deps(compose, dep_containers, with_extends, dest)
+        dest.append(cnt)
+    return dest
 
 ###################
 # podman and compose classes
@@ -821,7 +801,6 @@ def resolve_extends(services, service_names, dotenv_dict):
             normalize_service(from_service)
         else:
             from_service = services.get(from_service_name, {}).copy()
-            del from_service["_deps"]
             try:
                 del from_service["extends"]
             except KeyError:
@@ -962,14 +941,6 @@ class PodmanCompose:
             services = {}
             print("WARNING: No services defined")
 
-        # NOTE: maybe add "extends.service" to _deps at this stage
-        flat_deps(services, with_extends=True)
-        service_names = sorted([ (len(srv["_deps"]), name) for name, srv in services.items() ])
-        service_names = [ name for _, name in service_names]
-        resolve_extends(services, service_names, self.dotenv_dict)
-        flat_deps(services)
-        service_names = sorted([ (len(srv["_deps"]), name) for name, srv in services.items() ])
-        service_names = [ name for _, name in service_names]
         # volumes: [...]
         shared_vols = compose.get('volumes', {})
         # shared_vols = list(shared_vols.keys())
@@ -1020,9 +991,7 @@ class PodmanCompose:
                 given_containers.append(cnt)
         self.container_names_by_service = container_names_by_service
         container_by_name = dict([(c["name"], c) for c in given_containers])
-        #print("deps:", [(c["name"], c["_deps"]) for c in given_containers])
         given_containers = list(container_by_name.values())
-        given_containers.sort(key=lambda c: len(c.get('_deps', None) or []))
         #print("sorted:", [c["name"] for c in given_containers])
         tr = transformations[transform_policy]
         pods, containers = tr(
@@ -1265,12 +1234,12 @@ def compose_up(compose, args):
     if args.services:
         for cnt in compose.containers:
             if cnt['service_name'] in args.services:
-                compose_up_run(compose, cnt, args, args.detach)
                 started_containers.append(cnt)
     else:
-        for cnt in compose.containers:
-            compose_up_run(compose, cnt, args, args.detach)
         started_containers = compose.containers
+    started_containers = all_deps(compose, started_containers)
+    for cnt in started_containers:
+        compose_up_run(compose, cnt, args, args.detach)
 
     if args.no_start or args.detach or args.dry_run: return
     # TODO: if error creating do not enter loop
@@ -1329,10 +1298,11 @@ def compose_run(compose, args):
     container_names = compose.container_names_by_service[args.service]
     container_name = container_names[0]
     cnt = compose.container_by_name[container_name]
-    deps = cnt["_deps"]
     if not args.no_deps:
-        # TODO: start services in deps
-        pass
+        for dep in all_deps(compose, [cnt]):
+            if dep is cnt:
+                continue
+            compose_up_run(compose, dep, args, detached=True)
     # adjust one-off container options
     name0 = "{}_{}_tmp{}".format(compose.project_name, args.service, random.randrange(0, 65536))
     cnt["name"] = args.name or name0
