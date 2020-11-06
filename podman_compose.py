@@ -1213,9 +1213,9 @@ def compose_up_run(compose, cnt, args):
                                     detached=args.detach, podman_command=podman_command)
     try:
         res = json.loads(compose.podman.output(['inspect', cnt['name']], stderr=subprocess.DEVNULL))
-        inspect=res[0]
+        inspect = res[0]
         if "CreateCommand" in inspect["Config"]:
-            inpsect_args=inspect["Config"]["CreateCommand"][1:]
+            inpsect_args = inspect["Config"]["CreateCommand"][1:]
             if args.force_recreate or inpsect_args != podman_args:
                 compose.podman.run(["stop", "-t=1", cnt["name"]])
                 compose.podman.run(["rm", cnt["name"]])
@@ -1223,11 +1223,11 @@ def compose_up_run(compose, cnt, args):
             elif inspect['State']['Running'] == False and podman_command == 'run':
                 compose.podman.run(["start", cnt["name"]])
             else:
-                print(cnt['name'], " already started")
+                print(cnt['name'], "already started")
         else:
-            create=True
+            create = True
     except subprocess.CalledProcessError:
-        create=True
+        create = True
     if create:
         subproc = compose.podman.run(podman_args)
         if podman_command == 'run' and subproc.returncode:
@@ -1250,7 +1250,6 @@ def compose_up(compose, args):
         compose.commands['down'](compose, args)
     # args.no_recreate disables check for changes (which is not implemented)
 
-
     create_pods(compose, args)
     started_containers = []
     if args.services:
@@ -1261,7 +1260,7 @@ def compose_up(compose, args):
     else:
         for cnt in compose.containers:
             compose_up_run(compose, cnt, args)
-        started_containers=compose.containers
+        started_containers = compose.containers
 
     if args.no_start or args.detach or args.dry_run: return
     # TODO: if error creating do not enter loop
@@ -1360,9 +1359,9 @@ def transfer_service_status(compose, args, action):
     podman_args = [action]
     timeout = getattr(args, 'timeout', None)
     if timeout is not None:
-        podman_args.extend(['-t', "{}".format(timeout)])
+        podman_args += ['-t', str(timeout)]
     for target in targets:
-        if compose.podman.run(podman_args+[target]).returncode == 1:
+        if compose.podman.run(podman_args + [target]).returncode == 1:
             exit(1)
 
 @cmd_run(podman_compose, 'start', 'start specific services')
@@ -1395,7 +1394,7 @@ def compose_logs(compose, args):
         podman_args.append('-t')
     compose.podman.run(podman_args + target)
 
-@cmd_run(podman_compose, 'exec','Execute a command in a running container')
+@cmd_run(podman_compose, 'exec', 'Execute a command in a running container')
 def compose_exec(compose, args):
     container_names_by_service = compose.container_names_by_service
     service = args.services[0]
