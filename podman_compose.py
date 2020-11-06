@@ -702,10 +702,11 @@ def flat_deps(services, with_extends=False):
 ###################
 
 class Podman:
-    def __init__(self, compose, podman_path='podman', dry_run=False):
+    def __init__(self, compose, podman_path='podman', dry_run=False, verbose=False):
         self.compose = compose
         self.podman_path = podman_path
         self.dry_run = dry_run
+        self.verbose = verbose
 
     def output(self, podman_args, stderr=None):
         cmd = [self.podman_path] + podman_args
@@ -713,7 +714,8 @@ class Podman:
 
     def run(self, podman_args, log_formatter=None, wait=True, sleep=1):
         podman_args_str = [shlex.quote(str(arg)) for arg in podman_args]
-        print("podman " + " ".join(podman_args_str))
+        if self.verbose:
+            print("podman " + " ".join(podman_args_str))
         if self.dry_run:
             return None
 
@@ -728,7 +730,9 @@ class Podman:
             p = subprocess.Popen(cmd)
 
         if wait:
-            print(p.wait(), "\n")
+            res = p.wait()
+            if self.verbose:
+                print(res, end='\n\n')
         if sleep:
             time.sleep(sleep)
         return p
@@ -851,7 +855,7 @@ class PodmanCompose:
                 if args.dry_run == False:
                     sys.stderr.write("Binary {} has not been found.\n".format(podman_path))
                     exit(1)
-        self.podman = Podman(self, podman_path, args.dry_run)
+        self.podman = Podman(self, podman_path, args.dry_run, args.verbose)
         if not args.dry_run:
             # just to make sure podman is running
             try:
@@ -861,7 +865,8 @@ class PodmanCompose:
             if not self.podman_version:
                 sys.stderr.write("it seems that you do not have `podman` installed\n")
                 exit(1)
-            print("using podman version: "+self.podman_version)
+            if args.verbose:
+                print("using podman version: " + self.podman_version)
         cmd_name = args.command
         cmd = self.commands[cmd_name]
         cmd(self, args)
@@ -1062,6 +1067,8 @@ class PodmanCompose:
         parser.add_argument("-C", "--compatibility-mode",
                             help="Run in compatibility mode with docker and docker-compose to create binding volumes if missing",
                             action='store_true')
+        parser.add_argument("--verbose",
+                            help="Output more debug logs", action='store_true')
 
 podman_compose = PodmanCompose()
 
