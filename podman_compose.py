@@ -1301,11 +1301,8 @@ def compose_up(compose, args):
 
 @cmd_run(podman_compose, 'down', 'tear down entire stack')
 def compose_down(compose, args):
-    podman_args=[]
-    timeout=getattr(args, 'timeout', None)
-    if timeout is None:
-        timeout = 1
-    podman_args.extend(['-t', "{}".format(timeout)])
+    timeout = getattr(args, 'timeout', 1)
+    podman_args = ['-t', str(timeout)]
 
     for cnt in compose.containers:
         compose.podman.run(["stop", *podman_args, cnt["name"]])
@@ -1407,7 +1404,7 @@ def compose_logs(compose, args):
         podman_args.extend(['--tail', args.tail])
     if args.timestamps:
         podman_args.append('-t')
-    compose.podman.run(podman_args+target)
+    compose.podman.run(podman_args + target)
 
 @cmd_run(podman_compose, 'exec','Execute a command in a running container')
 def compose_exec(compose, args):
@@ -1553,7 +1550,7 @@ def compose_exec_parse(parser):
     parser.add_argument('cmd', metavar='command', nargs=argparse.REMAINDER,
                         help='command to execute')
     parser.add_argument("-u", "--user", metavar='USER',
-        help="Run the command as this user.", action='append')
+                        help="Run the command as this user.", action='append')
     parser.add_argument("-w", "--workdir", type=str, default=None,
                         help="Working directory inside the container")
     parser.add_argument("-T", action='store_true',
