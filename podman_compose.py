@@ -719,7 +719,7 @@ class Podman:
         if self.dry_run:
             return None
 
-        cmd = [self.podman_path]+podman_args_str
+        cmd = [self.podman_path] + podman_args_str
         # subprocess.Popen(args, bufsize = 0, executable = None, stdin = None, stdout = None, stderr = None, preexec_fn = None, close_fds = False, shell = False, cwd = None, env = None, universal_newlines = False, startupinfo = None, creationflags = 0)
         if log_formatter is not None:
             # Pipe podman process output through log_formatter (which can add colored prefix)
@@ -1216,12 +1216,13 @@ def up_specific(compose, args):
             deps.extend([])
     # args.always_recreate_deps
 
-    compose_up(compose,args)
+    compose_up(compose, args)
     print("services", args.services)
     raise NotImplementedError("starting specific services is not yet implemented")
+
 def compose_up_run(compose, cnt, args):
     podman_command = 'run' if args.detach and not args.no_start else 'create'
-    create=False
+    create = False
     podman_args = container_to_args(compose, cnt,
                                     detached=args.detach, podman_command=podman_command)
     try:
@@ -1269,7 +1270,7 @@ def compose_up(compose, args):
     if args.services:
         for cnt in compose.containers:
             if cnt['service_name'] in args.services:
-                compose_up_run(compose,cnt,args)
+                compose_up_run(compose, cnt, args)
                 started_containers.append(cnt)
     else:
         for cnt in compose.containers:
@@ -1335,9 +1336,8 @@ def compose_ps(compose, args):
 @cmd_run(podman_compose, 'run', 'create a container similar to a service to run a one-off command')
 def compose_run(compose, args):
     create_pods(compose, args)
-    print(args)
-    container_names=compose.container_names_by_service[args.service]
-    container_name=container_names[0]
+    container_names = compose.container_names_by_service[args.service]
+    container_name = container_names[0]
     cnt = compose.container_by_name[container_name]
     deps = cnt["_deps"]
     if not args.no_deps:
@@ -1356,7 +1356,7 @@ def compose_run(compose, args):
     if args.volume:
         # TODO: handle volumes
         pass
-    cnt['tty']=False if args.T else True
+    cnt['tty'] = False if args.T else True
     if args.cnt_command is not None and len(args.cnt_command) > 0:
         cnt['command']=args.cnt_command
     # run podman
@@ -1376,8 +1376,8 @@ def transfer_service_status(compose, args, action):
         if service not in container_names_by_service:
             raise ValueError("unknown service: " + service)
         targets.extend(container_names_by_service[service])
-    podman_args=[action]
-    timeout=getattr(args, 'timeout', None)
+    podman_args = [action]
+    timeout = getattr(args, 'timeout', None)
     if timeout is not None:
         podman_args.extend(['-t', "{}".format(timeout)])
     for target in targets:
@@ -1416,25 +1416,25 @@ def compose_logs(compose, args):
 
 @cmd_run(podman_compose, 'exec','Execute a command in a running container')
 def compose_exec(compose, args):
-        container_names_by_service = compose.container_names_by_service
-        service=args.services[0]
-        try:
-            container_name=container_names_by_service[service][0]
-        except:
-            raise ValueError("unknown service: " + service)
-        cnt=compose.container_by_name[container_name]
-        podman_args = ['exec']
-        if args.user:
-            podman_args.extend(["-u", args.user[0]])
-        if args.workdir:
-            podman_args.extend(["-w", args.workdir])
-        if cnt.get('stdin_open'):
-            podman_args.append('-i')
-        if cnt.get('tty'):
-            podman_args.append('--tty')
-        podman_args.append(container_name)
-        podman_args.extend(args.cmd)
-        exit(compose.podman.run(podman_args , sleep=0).returncode)
+    container_names_by_service = compose.container_names_by_service
+    service = args.services[0]
+    try:
+        container_name = container_names_by_service[service][0]
+    except:
+        raise ValueError("unknown service: " + service)
+    cnt = compose.container_by_name[container_name]
+    podman_args = ['exec']
+    if args.user:
+        podman_args.extend(["-u", args.user[0]])
+    if args.workdir:
+        podman_args.extend(["-w", args.workdir])
+    if cnt.get('stdin_open'):
+        podman_args.append('-i')
+    if cnt.get('tty'):
+        podman_args.append('--tty')
+    podman_args.append(container_name)
+    podman_args.extend(args.cmd)
+    exit(compose.podman.run(podman_args , sleep=0).returncode)
 
 ###################
 # command arguments parsing
