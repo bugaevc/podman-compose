@@ -377,7 +377,7 @@ def tr_1podfw(project_name, services, given_containers):
     return pods, containers
 
 
-def assert_volume(compose, mount_dict):
+def assert_volume(compose, mount_dict, verbose=False):
     """
     inspect volume to get directory
     create volume if needed
@@ -388,10 +388,15 @@ def assert_volume(compose, mount_dict):
 
     vol_name_orig = mount_dict.get("_source", None)
     vol_name = mount_dict["source"]
-    print("podman volume inspect {vol_name} || podman volume create {vol_name}".format(vol_name=vol_name))
+    if verbose:
+        print("podman volume inspect {vol_name} || podman volume create {vol_name}".format(vol_name=vol_name))
     # TODO: might move to using "volume list"
     # podman volume list --format '{{.Name}}\t{{.MountPoint}}' -f 'label=io.podman.compose.project=HERE'
-    try: out = compose.podman.output(["volume", "inspect", vol_name]).decode('utf-8')
+    try:
+        out = compose.podman.output(
+            ["volume", "inspect", vol_name],
+            stderr=None if verbose else subprocess.DEVNULL
+        ).decode('utf-8')
     except subprocess.CalledProcessError:
         compose.podman.output(["volume", "create", "--label", "io.podman.compose.project={}".format(proj_name), vol_name])
         out = compose.podman.output(["volume", "inspect", vol_name]).decode('utf-8')
@@ -480,13 +485,13 @@ def mount_desc_to_volume_args(compose, mount_desc, srv_name, cnt_name):
     if opts: args += ':' + ','.join(opts)
     return args
 
-def get_mount_args(compose, cnt, volume):
+def get_mount_args(compose, cnt, volume, verbose=False):
     proj_name = compose.project_name
     srv_name = cnt['_service']
     basedir = compose.dirname
     if is_str(volume): volume = parse_short_mount(compose, volume, basedir)
     mount_type = volume["type"]
-    assert_volume(compose, fix_mount_dict(volume, proj_name, srv_name))
+    assert_volume(compose, fix_mount_dict(volume, proj_name, srv_name), verbose)
     if compose._prefer_volume_over_mount:
         if mount_type == 'tmpfs':
             # TODO: --tmpfs /tmp:rw,size=787448k,mode=1777
@@ -506,7 +511,7 @@ def get_mount_args(compose, cnt, volume):
         args = mount_desc_to_mount_args(compose, volume, srv_name, cnt['name'])
         return ['--mount', args]
 
-def container_to_args(compose, cnt, detached=True, podman_command='run'):
+def container_to_args(compose, cnt, verbose=False, detached=True, podman_command='run'):
     # TODO: double check -e , --add-host, -v, --read-only
     dirname = compose.dirname
     shared_vols = compose.shared_vols
@@ -564,7 +569,7 @@ def container_to_args(compose, cnt, detached=True, podman_command='run'):
         podman_args.extend(['--tmpfs', i])
     for volume in cnt.get('volumes', []):
         # TODO: should we make it os.path.realpath(os.path.join(, i))?
-        podman_args.extend(get_mount_args(compose, cnt, volume))
+        podman_args.extend(get_mount_args(compose, cnt, volume, verbose))
     for i in cnt.get('extra_hosts', []):
         podman_args.extend(['--add-host', i])
     for i in cnt.get('expose', []):
@@ -1210,7 +1215,9 @@ def compose_up_run(compose, cnt, args):
     podman_command = 'run' if args.detach and not args.no_start else 'create'
     create = False
     podman_args = container_to_args(compose, cnt,
-                                    detached=args.detach, podman_command=podman_command)
+                                    verbose=args.verbose,
+                                    detached=args.detach,
+                                    podman_command=podman_command)
     try:
         res = json.loads(compose.podman.output(['inspect', cnt['name']], stderr=subprocess.DEVNULL))
         inspect = res[0]
@@ -1340,7 +1347,7 @@ def compose_run(compose, args):
     if args.cnt_command is not None and len(args.cnt_command) > 0:
         cnt['command']=args.cnt_command
     # run podman
-    podman_args = container_to_args(compose, cnt, args.detach)
+    podman_args = container_to_args(compose, cnt, args.verbose, args.detach)
     if not args.detach:
         podman_args.insert(1, '-i')
         if args.rm:
