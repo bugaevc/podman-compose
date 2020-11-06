@@ -533,14 +533,24 @@ def container_to_args(compose, cnt, detached=True, podman_command='run'):
         podman_args.extend(['--cap-drop', c])
     for d in cnt.get('devices', []):
         podman_args.extend(['--device', d])
+
+    env = compose.dotenv_dict.copy()
+    env.update(os.environ)  # Shell environment variables take precedence.
+    # Pass through variables defined for container environment only.
+    filtered_env = {}
+    for k, v in cnt.get('environment', {}).items():
+        if v is None and k in env:
+            filtered_env[k] = env[k]
+        else:
+            filtered_env[k] = v
+    for e in norm_as_list(filtered_env):
+        podman_args.extend(['-e', e])
     env_file = cnt.get('env_file', [])
     if is_str(env_file): env_file = [env_file]
     for i in env_file:
         i = os.path.realpath(os.path.join(dirname, i))
         podman_args.extend(['--env-file', i])
-    env = norm_as_list(cnt.get('environment', {}))
-    for e in env:
-        podman_args.extend(['-e', e])
+
     tmpfs_ls = cnt.get('tmpfs', [])
     if is_str(tmpfs_ls): tmpfs_ls = [tmpfs_ls]
     for i in tmpfs_ls:
@@ -798,6 +808,7 @@ def resolve_extends(services, service_names, dotenv_dict):
 class PodmanCompose:
     def __init__(self):
         self.commands = {}
+        self.dotenv_dict = {}
         self.global_args = None
         self.project_name = None
         self.dirname = None
@@ -888,13 +899,13 @@ class PodmanCompose:
         if os.path.exists(dotenv_path):
             with open(dotenv_path, 'r') as f:
                 dotenv_ls = [l.strip() for l in f if l.strip() and not l.startswith('#')]
-                dotenv_dict = dict([l.split("=", 1) for l in dotenv_ls if "=" in l])
+                self.dotenv_dict = dict([l.split("=", 1) for l in dotenv_ls if "=" in l])
         else:
-            dotenv_dict = {}
+            self.dotenv_dict = {}
         # TODO: should read and respect those env variables
         # see: https://docs.docker.com/compose/reference/envvars/
         # see: https://docs.docker.com/compose/env-file/
-        dotenv_dict.update({
+        self.dotenv_dict.update({
             "COMPOSE_FILE": os.path.basename(filename),
             "COMPOSE_PROJECT_NAME": self.project_name,
             "COMPOSE_PATH_SEPARATOR": ":",
@@ -909,7 +920,7 @@ class PodmanCompose:
                     exit(1)
                 content = normalize(content)
                 #print(filename, json.dumps(content, indent = 2))
-                content = rec_subs(content, [os.environ, dotenv_dict])
+                content = rec_subs(content, [os.environ, self.dotenv_dict])
                 rec_merge(compose, content)
         # debug mode
         if len(files)>1:
@@ -924,7 +935,7 @@ class PodmanCompose:
         flat_deps(services, with_extends=True)
         service_names = sorted([ (len(srv["_deps"]), name) for name, srv in services.items() ])
         service_names = [ name for _, name in service_names]
-        resolve_extends(services, service_names, dotenv_dict)
+        resolve_extends(services, service_names, self.dotenv_dict)
         flat_deps(services)
         service_names = sorted([ (len(srv["_deps"]), name) for name, srv in services.items() ])
         service_names = [ name for _, name in service_names]
