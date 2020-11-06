@@ -1145,7 +1145,7 @@ def build_one(compose, args, cnt):
         "build", "-t", cnt["image"],
     ]
 
-    for it in cnt['build']['volumes']:
+    for it in build_desc.get('volumes', ()):
         build_args += ['-v', it]
 
     build_args += ["-f", dockerfile]
@@ -1153,12 +1153,11 @@ def build_one(compose, args, cnt):
     if "target" in build_desc:
         build_args.extend(["--target", build_desc["target"]])
     container_to_ulimit_args(cnt, build_args)
-    if args.no_cache:
-        build_args.append("--no-cache")
+    if getattr(args, 'no_cache', None): build_args.append("--no-cache")
     if getattr(args, 'pull_always', None): build_args.append("--pull-always")
     elif getattr(args, 'pull', None): build_args.append("--pull")
     args_list = norm_as_list(build_desc.get('args', {}))
-    for build_arg in args_list + args.build_arg:
+    for build_arg in args_list + getattr(args, 'build_arg', []):
         build_args.extend(("--build-arg", build_arg,))
     build_args.append(ctx)
     compose.podman.run(build_args, sleep=0)
@@ -1185,7 +1184,10 @@ def create_pods(compose, args):
             "--share", "net",
         ]
 
-        ports = sorted(pod.get("ports")) or []
+        if 'ports' in pod:
+            ports = sorted(pod['ports'])
+        else:
+            ports = []
         for i in ports:
             podman_args.extend(['-p', i])
         try:
