@@ -1211,12 +1211,15 @@ def create_pods(compose, args):
         compose.podman.run(["pod", "create"] + podman_args + CreateCommandLabel)
 
 
-def compose_up_run(compose, cnt, args):
-    podman_command = 'run' if args.detach and not args.no_start else 'create'
+def compose_up_run(compose, cnt, args, detached):
+    if getattr(args, 'no_start', False):
+        podman_command = 'create'
+    else:
+        podman_command = 'run'
     create = False
     podman_args = container_to_args(compose, cnt,
                                     verbose=args.verbose,
-                                    detached=args.detach,
+                                    detached=detached,
                                     podman_command=podman_command)
     try:
         res = json.loads(compose.podman.output(['inspect', cnt['name']], stderr=subprocess.DEVNULL))
@@ -1237,7 +1240,7 @@ def compose_up_run(compose, cnt, args):
         create = True
     if create:
         subproc = compose.podman.run(podman_args)
-        if podman_command == 'run' and subproc.returncode:
+        if podman_command == 'run' and subproc.returncode == 0:
             compose.podman.run(['start', cnt['name']])
 
 
@@ -1262,11 +1265,11 @@ def compose_up(compose, args):
     if args.services:
         for cnt in compose.containers:
             if cnt['service_name'] in args.services:
-                compose_up_run(compose, cnt, args)
+                compose_up_run(compose, cnt, args, args.detach)
                 started_containers.append(cnt)
     else:
         for cnt in compose.containers:
-            compose_up_run(compose, cnt, args)
+            compose_up_run(compose, cnt, args, args.detach)
         started_containers = compose.containers
 
     if args.no_start or args.detach or args.dry_run: return
