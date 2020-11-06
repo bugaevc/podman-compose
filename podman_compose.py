@@ -1206,17 +1206,6 @@ def create_pods(compose, args):
         compose.podman.run(["pod", "create"] + podman_args + CreateCommandLabel)
 
 
-def up_specific(compose, args):
-    deps = []
-    if not args.no_deps:
-        for service in args.services:
-            deps.extend([])
-    # args.always_recreate_deps
-
-    compose_up(compose, args)
-    print("services", args.services)
-    raise NotImplementedError("starting specific services is not yet implemented")
-
 def compose_up_run(compose, cnt, args):
     podman_command = 'run' if args.detach and not args.no_start else 'create'
     create = False
