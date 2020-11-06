@@ -1428,9 +1428,8 @@ def compose_exec(compose, args):
         podman_args.extend(["-u", args.user[0]])
     if args.workdir:
         podman_args.extend(["-w", args.workdir])
-    if cnt.get('stdin_open'):
+    if not args.T:
         podman_args.append('-i')
-    if cnt.get('tty'):
         podman_args.append('--tty')
     podman_args.append(container_name)
     podman_args.extend(args.cmd)
@@ -1562,6 +1561,8 @@ def compose_exec_parse(parser):
         help="Run the command as this user.", action='append')
     parser.add_argument("-w", "--workdir", type=str, default=None,
                         help="Working directory inside the container")
+    parser.add_argument("-T", action='store_true',
+                        help="Disable TTY allocation")
 
 @cmd_parse(podman_compose, 'build')
 def compose_build_parse(parser):
