@@ -686,9 +686,9 @@ class Podman:
         self.podman_path = podman_path
         self.dry_run = dry_run
 
-    def output(self, podman_args):
-        cmd = [self.podman_path]+podman_args
-        return subprocess.check_output(cmd)
+    def output(self, podman_args, stderr=None):
+        cmd = [self.podman_path] + podman_args
+        return subprocess.check_output(cmd, stderr=stderr)
 
     def run(self, podman_args, wait=True, sleep=1):
         podman_args_str = [str(arg) for arg in podman_args]
@@ -1113,15 +1113,33 @@ def compose_build(compose, args):
 
 def create_pods(compose, args):
     for pod in compose.pods:
+        delete = False
         podman_args = [
-            "pod", "create",
             "--name={}".format(pod["name"]),
             "--share", "net",
         ]
-        ports = pod.get("ports", None) or []
+
+        ports = sorted(pod.get("ports")) or []
         for i in ports:
             podman_args.extend(['-p', i])
-        compose.podman.run(podman_args)
+        try:
+            res = json.loads(compose.podman.output(["pod", "inspect", pod["name"]], stderr=subprocess.DEVNULL))
+            CreateCommand = res['Labels']['io.podman.compose.CreateCommand'].split(" ")
+            if CreateCommand == podman_args:
+                print("Pod {} already exists".format(pod["name"]))
+                return
+            else:
+               delete = True
+        except subprocess.CalledProcessError:
+            pass
+        except KeyError:
+            delete = True
+        if delete:
+            print("Recreate {} pod".format(pod['name']))
+            compose.podman.run(["pod", "rm","-f", pod["name"]], sleep=0)
+        CreateCommandLabel = ['--label', 'io.podman.compose.CreateCommand=' + ' '.join(podman_args)]
+        compose.podman.run(["pod", "create"] + podman_args + CreateCommandLabel)
+
 
 def up_specific(compose, args):
     deps = []
@@ -1129,14 +1147,40 @@ def up_specific(compose, args):
         for service in args.services:
             deps.extend([])
     # args.always_recreate_deps
+
+    compose_up(compose,args)
     print("services", args.services)
     raise NotImplementedError("starting specific services is not yet implemented")
+def compose_up_run(compose, cnt, args):
+    podman_command = 'run' if args.detach and not args.no_start else 'create'
+    create=False
+    podman_args = container_to_args(compose, cnt,
+                                    detached=args.detach, podman_command=podman_command)
+    try:
+        res = json.loads(compose.podman.output(['inspect', cnt['name']], stderr=subprocess.DEVNULL))
+        inspect=res[0]
+        if "CreateCommand" in inspect["Config"]:
+            inpsect_args=inspect["Config"]["CreateCommand"][1:]
+            if args.force_recreate or inpsect_args != podman_args:
+                compose.podman.run(["stop", "-t=1", cnt["name"]], sleep=0)
+                compose.podman.run(["rm", cnt["name"]], sleep=0)
+                create = True
+            elif inspect['State']['Running'] == False and podman_command == 'run':
+                compose.podman.run(["start", cnt["name"]], sleep=0)
+            else:
+                print(cnt['name'], " already started")
+        else:
+            create=True
+    except subprocess.CalledProcessError:
+        create=True
+    if create:
+        subproc = compose.podman.run(podman_args)
+        if podman_command == 'run' and subproc.returncode:
+            compose.podman.run(['start', cnt['name']])
+
 
 @cmd_run(podman_compose, 'up', 'Create and start the entire stack or some of its services')
 def compose_up(compose, args):
-    if args.services:
-        return up_specific(compose, args)
-
     if not args.no_build:
         # `podman build` does not cache, so don't always build
         build_args = argparse.Namespace(
@@ -1147,26 +1191,29 @@ def compose_up(compose, args):
     shared_vols = compose.shared_vols
 
     # TODO: implement check hash label for change
-    if args.force_recreate:
+    if args.force_recreate and not args.services:
         compose.commands['down'](compose, args)
     # args.no_recreate disables check for changes (which is not implemented)
 
-    podman_command = 'run' if args.detach and not args.no_start else 'create'
 
     create_pods(compose, args)
-    for cnt in compose.containers:
-        podman_args = container_to_args(compose, cnt,
-            detached=args.detach, podman_command=podman_command)
-        subproc = compose.podman.run(podman_args)
-        if podman_command == 'run' and subproc.returncode:
-            compose.podman.run(['start', cnt['name']])
+    started_containers = []
+    if args.services:
+        for cnt in compose.containers:
+            if cnt['service_name'] in args.services:
+                compose_up_run(compose,cnt,args)
+                started_containers.append(cnt)
+    else:
+        for cnt in compose.containers:
+            compose_up_run(compose, cnt, args)
+        started_containers=compose.containers
+
     if args.no_start or args.detach or args.dry_run: return
-    # TODO: handle already existing
     # TODO: if error creating do not enter loop
     # TODO: colors if sys.stdout.isatty()
 
     threads = []
-    for cnt in compose.containers:
+    for cnt in started_containers:
         # TODO: remove sleep from podman.run
         thread = Thread(target=compose.podman.run, args=[['start', '-a', cnt['name']]], daemon=True)
         thread.start()
@@ -1179,6 +1226,7 @@ def compose_up(compose, args):
                 threads.remove(thread)
                 if args.abort_on_container_exit:
                     exit(-1)
+
 
 @cmd_run(podman_compose, 'down', 'tear down entire stack')
 def compose_down(compose, args):
@@ -1252,7 +1300,8 @@ def transfer_service_status(compose, args, action):
     if timeout is not None:
         podman_args.extend(['-t', "{}".format(timeout)])
     for target in targets:
-        compose.podman.run(podman_args+[target], sleep=0)
+        if compose.podman.run(podman_args+[target], sleep=0).returncode == 1:
+            exit(1)
 
 @cmd_run(podman_compose, 'start', 'start specific services')
 def compose_start(compose, args):
@@ -1283,6 +1332,28 @@ def compose_logs(compose, args):
     if args.timestamps:
         podman_args.append('-t')
     compose.podman.run(podman_args+target)
+
+@cmd_run(podman_compose, 'exec','Execute a command in a running container')
+def compose_exec(compose, args):
+        container_names_by_service = compose.container_names_by_service
+        service=args.services[0]
+        try:
+            container_name=container_names_by_service[service][0]
+        except:
+            raise ValueError("unknown service: " + service)
+        cnt=compose.container_by_name[container_name]
+        podman_args = ['exec']
+        if args.user:
+            podman_args.extend(["-u", args.user[0]])
+        if args.workdir:
+            podman_args.extend(["-w", args.workdir])
+        if cnt.get('stdin_open'):
+            podman_args.append('-i')
+        if cnt.get('tty'):
+            podman_args.append('--tty')
+        podman_args.append(container_name)
+        podman_args.extend(args.cmd)
+        exit(compose.podman.run(podman_args , sleep=0).returncode)
 
 ###################
 # command arguments parsing
@@ -1394,7 +1465,18 @@ def compose_ps_parse(parser):
     parser.add_argument("-q", "--quiet",
         help="Only display container IDs", action='store_true')
 
-@cmd_parse(podman_compose, ['build', 'up'])
+@cmd_parse(podman_compose, 'exec')
+def compose_exec_parse(parser):
+    parser.add_argument('services', metavar='services', nargs=1,
+                        help='services to push')
+    parser.add_argument('cmd', metavar='command', nargs=argparse.REMAINDER,
+                        help='command to execute')
+    parser.add_argument("-u", "--user", metavar='USER',
+        help="Run the command as this user.", action='append')
+    parser.add_argument("-w", "--workdir", type=str, default=None,
+                        help="Working directory inside the container")
+
+@cmd_parse(podman_compose, 'build')
 def compose_build_parse(parser):
     parser.add_argument("--pull",
         help="attempt to pull a newer version of the image", action='store_true')
@@ -1406,6 +1488,8 @@ def compose_build_parse(parser):
                         help='affected services')
     parser.add_argument("--no-cache",
                         help="Do not use cache when building the image.", action='store_true')
+    parser.add_argument('services', metavar='SERVICES', nargs='*',
+        help='service names to start')
 
 def main():
     podman_compose.run()
